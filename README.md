@@ -1,62 +1,93 @@
 ﻿# StdGee
 
-> StdGee keeps Gee's learning-friendly API, but hands routing back to modern `net/http`.
+> A Gee-style teaching framework rebuilt on top of modern `net/http`.
 
-[中文说明 / Chinese README](README.zh-CN.md)
+[中文文档 / Chinese README](README.zh-CN.md)
 
-StdGee is a small teaching project that rebuilds the ideas from Gee-Web on top of the Go standard library. It keeps the familiar learning surface of `Engine`, `Group`, `Context`, templates, static files, logger/recovery middleware, and graceful shutdown, while letting `http.ServeMux` own routing, method matching, path wildcards, and core HTTP semantics.
+| Snapshot | Details |
+| --- | --- |
+| Goal | Rebuild the ideas from Gee-Web without a custom router |
+| Audience | Readers learning modern `net/http` or revisiting Gee-Web after Go 1.22 |
+| Go baseline | `go 1.25.0` |
+| Main takeaway | Keep the friendly API, delete the routing code the standard library now handles well |
 
-## At a Glance
+StdGee is a small teaching project that keeps `Engine`, `Group`, `Context`, templates, static files, middleware, and graceful shutdown, while delegating routing, method matching, path wildcards, and core HTTP semantics to `http.ServeMux`.
 
-- Audience: readers who learned Gee-Web and want to see what the same ideas look like after Go 1.22.
-- Baseline: this repo targets `go 1.25.0`.
-- Main lesson: after Go 1.22, many "framework internals" for small web projects are better delegated to the standard library.
-- Optional extra: the repo also shows how Go 1.25's `http.CrossOriginProtection` can fit into the middleware chain.
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [Why This Repo Exists](#why-this-repo-exists)
+- [What Go 1.22 Changed](#what-go-122-changed)
+- [Gee-Web vs StdGee](#gee-web-vs-stdgee)
+- [What Comes From `net/http`](#what-comes-from-nethttp)
+- [Two Ways to Register Handlers](#two-ways-to-register-handlers)
+- [Public API Surface](#public-api-surface)
+- [Common Building Blocks](#common-building-blocks)
+- [Migration from Gee-Web](#migration-from-gee-web)
+- [Optional Go 1.25 Addition](#optional-go-125-addition)
+- [Project Layout](#project-layout)
+- [Further Reading](#further-reading)
 
 ## Quick Start
+
+Run the demo:
 
 ```bash
 go run .
 ```
 
-Open `http://localhost:9999` and try:
+Then open `http://localhost:9999`.
 
-- `GET /`
-- `GET /ping`
-- `GET /posts/`
-- `GET /v1/hello/gopher`
-- `GET /v1/json`
-- `GET /assets/hello.txt`
-- `GET /v1/panic`
+### Demo Routes
 
-For the form example:
+| Route | Purpose |
+| --- | --- |
+| `GET /` | HTML template rendering demo |
+| `GET /ping` | Basic method-aware route |
+| `GET /posts/` | Exact trailing-slash matching with `{$}` |
+| `GET /v1/hello/gopher` | Path wildcard + `Context.Param` |
+| `GET /v1/json` | Standard-library-first handler style |
+| `GET /assets/hello.txt` | Static file serving |
+| `GET /v1/panic` | Recovery middleware demo |
+
+Form example:
 
 ```bash
 curl -X POST -d "username=gopher&password=123456" http://localhost:9999/v1/login
 ```
 
-## Why This Matters After Go 1.22
+## Why This Repo Exists
 
-Go 1.22 significantly upgraded `http.ServeMux`. That changed the tradeoff for small teaching frameworks and small production services.
+Gee-Web is great for learning how a small web framework can be built from scratch. StdGee asks a different question:
 
-`ServeMux` now supports:
+> After Go 1.22, which parts of that framework should still exist, and which parts should be handed back to the standard library?
 
-- method-aware patterns such as `GET /posts/{id}`
-- single-segment wildcards such as `{id}`
-- catch-all wildcards such as `{filepath...}`
-- exact trailing-slash matching with `{$}`
-- path parameter access through `req.PathValue("id")`
-- automatic `HEAD` support for `GET` routes
-- automatic `405 Method Not Allowed` responses with an `Allow` header
+The answer is the core idea of this repo:
 
-That means a project like StdGee no longer needs to spend most of its complexity on:
+- keep the teaching-friendly API surface
+- keep grouping, middleware composition, templates, and response helpers
+- stop re-implementing router behavior that `http.ServeMux` now handles well
 
-- building a custom trie router
-- parsing and storing path params in a separate map
-- manually dispatching methods
-- re-implementing `HEAD` and `405` behavior
+## What Go 1.22 Changed
 
-The result is the real lesson of this repo: keep the friendly API, delete the no-longer-necessary router code.
+Go 1.22 made `http.ServeMux` much more capable for small web applications.
+
+| Feature | Example | Why it matters |
+| --- | --- | --- |
+| Method-aware patterns | `GET /posts/{id}` | No separate method dispatch table is needed |
+| Single-segment wildcard | `{id}` | No custom params parser for common path params |
+| Catch-all wildcard | `{filepath...}` | Static and nested path matching become simpler |
+| Exact path match | `GET /posts/{$}` | Trailing-slash behavior is easier to express |
+| Native path params | `req.PathValue("id")` | No framework-owned params map is required |
+| Automatic `HEAD` for `GET` | `GET /ping` also matches `HEAD /ping` | Less manual HTTP compatibility code |
+| Automatic `405` + `Allow` | Wrong method on a matched path | Better defaults without extra framework logic |
+
+In practice, that lets StdGee delete a lot of code a tutorial router used to need:
+
+- custom trie routing
+- custom path param storage
+- manual method dispatch
+- manual `HEAD` and `405` behavior
 
 ## Gee-Web vs StdGee
 
@@ -64,7 +95,7 @@ The result is the real lesson of this repo: keep the friendly API, delete the no
 | --- | --- | --- |
 | Router core | Custom trie router | `http.ServeMux` |
 | Route syntax | `:name`, `*filepath` | `{name}`, `{filepath...}`, `{$}` |
-| Method matching | Framework-managed | Standard library pattern like `GET /path` |
+| Method matching | Framework-managed | Standard-library patterns like `GET /path` |
 | Path params | Custom params map | `req.PathValue` |
 | Middleware model | `Context.Next()` chain | `func(http.Handler) http.Handler` |
 | `HEAD` for `GET` | Usually handled manually | Built in |
@@ -72,72 +103,20 @@ The result is the real lesson of this repo: keep the friendly API, delete the no
 | Conflict detection | Framework-specific rules | `ServeMux` panics on conflicting registrations |
 | Graceful shutdown | Often omitted in tutorials | Exposed through `http.Server.Shutdown` |
 
-## What Comes From `net/http`, What Stays in StdGee
+## What Comes From `net/http`
 
-Handled by the standard library:
+| Owned by the standard library | Provided by StdGee |
+| --- | --- |
+| Route parsing and matching | Gee-like route grouping with `Group("/v1")` |
+| Path wildcard extraction | Middleware collection and wrapping order |
+| `HEAD` compatibility for `GET` | `Context` helpers such as `String`, `JSON`, and `HTML` |
+| `405 Method Not Allowed` + `Allow` | Template loading and rendering helpers |
+| Conflicting route panic behavior | Static file mounting helpers |
+|  | Graceful shutdown through the engine wrapper |
 
-- route parsing and matching
-- path wildcard extraction
-- `HEAD` compatibility for `GET`
-- `405 Method Not Allowed`
-- conflicting route panic behavior
+That split is the architectural lesson of the project.
 
-Handled by StdGee:
-
-- Gee-like grouping with `Group("/v1")`
-- middleware collection and wrapping order
-- `Context` response helpers such as `String`, `JSON`, and `HTML`
-- template loading and rendering helpers
-- static file mounting helpers
-- graceful shutdown through the engine wrapper
-
-## What Go 1.22 Changed in Practice
-
-### 1. Method-aware route patterns
-
-You can register HTTP method and path together:
-
-```go
-r.HandleFunc("GET /ping", func(w http.ResponseWriter, req *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	_, _ = w.Write([]byte("pong\n"))
-})
-```
-
-This removes the need for a separate `GET`/`POST` dispatch table inside the router.
-
-### 2. Native path wildcards
-
-The standard library now understands patterns like:
-
-```go
-GET /v1/hello/{name}
-GET /assets/{filepath...}
-GET /posts/{$}
-```
-
-- `{name}` matches one path segment.
-- `{filepath...}` matches the rest of the path.
-- `{$}` matches the path itself, but not child paths.
-
-### 3. Native path parameter access
-
-Instead of maintaining a framework-owned params map:
-
-```go
-name := req.PathValue("name")
-```
-
-StdGee's `Context.Param` is just a convenience wrapper over that standard-library behavior.
-
-### 4. Better default HTTP semantics
-
-If you register `GET /ping`, the standard library also handles `HEAD /ping`.
-If the path matches but the method does not, `ServeMux` returns `405 Method Not Allowed` and populates `Allow`.
-
-That is exactly the kind of behavior small frameworks should stop re-implementing.
-
-## Two Registration Styles
+## Two Ways to Register Handlers
 
 StdGee intentionally supports both a standard-library-first style and a Gee-style sugar layer.
 
@@ -150,13 +129,14 @@ v1.HandleFunc("GET /json", func(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"message": "hello from stdgee",
+		"ts":      time.Now().Unix(),
 		"path":    req.URL.Path,
 		"route":   req.Pattern,
 	})
 })
 ```
 
-This style teaches the modern `net/http` API directly.
+Use this style when you want to teach or learn modern `net/http` directly.
 
 ### Gee-style sugar
 
@@ -168,47 +148,20 @@ v1.GET("/hello/{name}", func(c *stdgee.Context) {
 })
 ```
 
-This style keeps the original Gee learning experience, but now the routing semantics still come from `ServeMux`.
+Use this style when you want the original Gee learning feel, but with standard-library routing underneath.
 
-## Public API Learning Surface
+## Public API Surface
 
-Core engine APIs:
+| Area | APIs |
+| --- | --- |
+| Engine | `stdgee.New()`, `Handle`, `HandleFunc`, `GET`, `POST`, `Group`, `Use`, `Run`, `Shutdown` |
+| Context | `Param`, `Query`, `PostForm`, `String`, `JSON`, `HTML`, `Data` |
+| Views and assets | `SetFuncMap`, `LoadHTMLGlob`, `Static` |
+| Middleware | `type Middleware func(http.Handler) http.Handler` |
 
-- `stdgee.New()`
-- `Engine.Handle`
-- `Engine.HandleFunc`
-- `Engine.GET`
-- `Engine.POST`
-- `Engine.Group`
-- `Engine.Use`
-- `Engine.Run`
-- `Engine.Shutdown`
+That middleware signature is especially important: it aligns StdGee with the broader Go `net/http` ecosystem instead of a framework-only `Next()` model.
 
-Context helpers:
-
-- `Context.Param`
-- `Context.Query`
-- `Context.PostForm`
-- `Context.String`
-- `Context.JSON`
-- `Context.HTML`
-- `Context.Data`
-
-View and assets:
-
-- `SetFuncMap`
-- `LoadHTMLGlob`
-- `Static`
-
-Middleware shape:
-
-```go
-type Middleware func(http.Handler) http.Handler
-```
-
-That signature is much closer to the broader Go ecosystem than a framework-specific `Next()` model.
-
-## Middleware, Templates, Static Files, and Shutdown
+## Common Building Blocks
 
 ### Middleware
 
@@ -216,7 +169,7 @@ That signature is much closer to the broader Go ecosystem than a framework-speci
 r.Use(stdgee.Logger(), stdgee.Recovery())
 ```
 
-Groups inherit parent middleware, and child-group middleware wraps closer to the handler. The tests in this repo verify the final execution order.
+Parent-group middleware wraps outside child-group middleware. The tests in this repo verify the final execution order.
 
 ### Templates
 
@@ -229,7 +182,7 @@ r.SetFuncMap(template.FuncMap{
 r.LoadHTMLGlob("templates/*")
 ```
 
-The rendering engine is still `html/template`; StdGee only provides a convenient place to store and use it.
+StdGee stores the templates, but rendering still comes from `html/template`.
 
 ### Static files
 
@@ -237,7 +190,7 @@ The rendering engine is still `html/template`; StdGee only provides a convenient
 r.Static("/assets", "./static")
 ```
 
-Under the hood this is standard-library file serving via `http.FileServer` and `http.StripPrefix`.
+Under the hood this uses `http.FileServer` and `http.StripPrefix`.
 
 ### Graceful shutdown
 
@@ -253,16 +206,14 @@ defer cancel()
 _ = r.Shutdown(shutdownCtx)
 ```
 
-Unlike many tutorial frameworks, StdGee keeps an `http.Server` so graceful shutdown is part of the public story.
+Unlike many tutorial frameworks, StdGee keeps an `http.Server`, so graceful shutdown is part of the public story.
 
-## Migrating from Gee-Web
+## Migration from Gee-Web
 
 ### 1. Convert route syntax
 
 - `:name` becomes `{name}`
 - `*filepath` becomes `{filepath...}`
-
-Example:
 
 ```go
 // Gee-Web
@@ -295,11 +246,11 @@ StdGee middleware uses the standard Go signature:
 func(http.Handler) http.Handler
 ```
 
-That makes middleware easier to reuse across projects that already speak `net/http`.
+That makes middleware easier to reuse across other `net/http` projects.
 
-## Optional Go 1.25 Addition: `CrossOriginProtection`
+## Optional Go 1.25 Addition
 
-Because this repo targets `go 1.25.0`, you can also plug in the new standard-library cross-origin protection:
+Because this repo targets `go 1.25.0`, it can also demonstrate the standard-library cross-origin protection added in Go 1.25:
 
 ```go
 cop := http.NewCrossOriginProtection()
@@ -308,7 +259,7 @@ cop.AddTrustedOrigin("https://example.com")
 r.Use(stdgee.ProtectCrossOrigin(cop))
 ```
 
-This is intentionally optional. The core teaching goal of StdGee is still the Go 1.22 routing model.
+This is intentionally optional. The main teaching focus is still the Go 1.22 routing model.
 
 ## Project Layout
 
@@ -339,5 +290,3 @@ Gee-Web-Std/
 ## One-Sentence Summary
 
 Gee-Web teaches how to build framework internals from scratch; StdGee teaches which of those internals should now be deleted in favor of modern `net/http`.
-#   S t d G e e  
- 
